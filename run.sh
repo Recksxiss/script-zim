@@ -1,21 +1,24 @@
 #!/usr/bin/env bash
 
-# Set strict error handling
+# =================================================
+# BigBearCasaOS Coolify SSH Setup Script
+# =================================================
+
 set -euo pipefail
 
-# Set text colors
+# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Check if running as root
+# Check root
 if [ "$EUID" -ne 0 ]; then 
     echo -e "${RED}Please run as root (use sudo)${NC}"
     exit 1
 fi
 
-# Function to print header
+# Header
 print_header() {
     echo "================================================"
     echo "$1"
@@ -29,7 +32,7 @@ if [ -f /etc/os-release ]; then
     OS=$ID
 fi
 
-# Install SSH based on distro
+# Install SSH
 install_ssh() {
     case $OS in
         ubuntu|debian)
@@ -50,107 +53,110 @@ install_ssh() {
     esac
 }
 
-# Configure SSH
-configure_ssh() {
-    # Backup original config
-    cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup
-    
-    # Ask user for PermitRootLogin preference
-    echo "Select PermitRootLogin setting:"
-    echo "1) yes            - Allows root login with password and key-based authentication"
-    echo "2) without-password - Allows root login with key-based authentication only"
-    echo "3) prohibit-password - Same as without-password (recommended for security)"
-    read -p "Enter choice (1-3): " root_login_choice
-
-    case $root_login_choice in
-        1) root_login="yes";;
-        2) root_login="without-password";;
-        3) root_login="prohibit-password";;
-        *) root_login="prohibit-password";;
-    esac
-
-    # Update SSH settings
-    sed -i "s/^#*PermitRootLogin.*/PermitRootLogin ${root_login}/" /etc/ssh/sshd_config
-    sed -i "s/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/" /etc/ssh/sshd_config
-
-    # Create required directories
-    mkdir -p /DATA/coolify/ssh/keys
-    mkdir -p ~/.ssh
-
-    # Remove old keys if exist
-    rm -f /DATA/coolify/ssh/keys/id.root@host.docker.internal
-    rm -f /DATA/coolify/ssh/keys/id.root@host.docker.internal.pub
-
-    # Generate SSH key pair
-    ssh-keygen -t ed25519 -a 100 -f /DATA/coolify/ssh/keys/id.root@host.docker.internal -q -N "" -C root@coolify
-
-    # Set ownership and permissions
-    chown 9999 /DATA/coolify/ssh/keys/id.root@host.docker.internal
-    cat /DATA/coolify/ssh/keys/id.root@host.docker.internal.pub >> ~/.ssh/authorized_keys
-    chmod 600 ~/.ssh/authorized_keys
-    chmod 700 ~/.ssh
-
-    # Restart and enable SSH service
-    systemctl restart sshd
-    systemctl enable sshd
+# Determine SSH service name
+ssh_service_name() {
+    if systemctl list-units --all | grep -q sshd; then
+        echo "sshd"
+    else
+        echo "ssh"
+    fi
 }
 
+# Configure SSH to use /DATA/coolify/ssh/keys
+configure_ssh_host() {
+    local service_name
+    service_name=$(ssh_service_name)
+
+    mkdir -p /DATA/coolify/ssh/keys/root
+    chmod 700 /DATA/coolify/ssh/keys/root
+
+    # Generate key if not exists
+    KEY_FILE="/DATA/coolify/ssh/keys/id.root@host.docker.internal"
+    if [ ! -f "$KEY_FILE" ]; then
+        ssh-keygen -t ed25519 -a 100 -f "$KEY_FILE" -q -N "" -C root@coolify
+    fi
+
+    # Copy public key to authorized_keys
+    cat "${KEY_FILE}.pub" > /DATA/coolify/ssh/keys/root/authorized_keys
+    chmod 600 /DATA/coolify/ssh/keys/root/authorized_keys
+
+    # Update sshd_config
+    SSHD_CONFIG="/etc/ssh/sshd_config"
+    if [ -w "$SSHD_CONFIG" ]; then
+        sed -i "s|^#*AuthorizedKeysFile.*|AuthorizedKeysFile /DATA/coolify/ssh/keys/%u/authorized_keys|" "$SSHD_CONFIG"
+        sed -i "s/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/" "$SSHD_CONFIG"
+
+        echo -e "${GREEN}Restarting SSH service...${NC}"
+        systemctl restart "$service_name"
+        systemctl enable "$service_name"
+    else
+        echo -e "${YELLOW}Warning: Cannot write to $SSHD_CONFIG, host SSH will not be modified.${NC}"
+        echo -e "${YELLOW}Coolify will need to connect via SSH container.${NC}"
+    fi
+}
+
+# Create SSH container as fallback
+create_ssh_container() {
+    mkdir -p /DATA/coolify/ssh/keys/root
+    chmod 700 /DATA/coolify/ssh/keys/root
+
+    KEY_FILE="/DATA/coolify/ssh/keys/id.root@host.docker.internal"
+    if [ ! -f "$KEY_FILE" ]; then
+        ssh-keygen -t ed25519 -a 100 -f "$KEY_FILE" -q -N "" -C root@coolify
+    fi
+
+    cat "${KEY_FILE}.pub" > /DATA/coolify/ssh/keys/root/authorized_keys
+    chmod 600 /DATA/coolify/ssh/keys/root/authorized_keys
+
+    docker run -d \
+      --name ssh-server \
+      -p 2222:22 \
+      -v /DATA/coolify/ssh/keys:/root/.ssh \
+      rastasheep/ubuntu-sshd:22.04 || echo "Container already exists"
+    
+    echo -e "${GREEN}SSH container created on port 2222${NC}"
+}
+
+# Clear Coolify cache
 clear_cache() {
     echo "Clearing Coolify cache..."
-    docker exec -it big-bear-coolify php artisan optimize
+    docker exec -it big-bear-coolify php artisan optimize || echo "Coolify container not running"
     echo "Cache cleared successfully!"
 }
 
-# Main execution
+# Main
 main() {
-    # Create Docker network if it doesn't exist
-    if ! docker network inspect coolify >/dev/null 2>&1; then
-        docker network create coolify
-    fi
-
     echo "Installing SSH server..."
     install_ssh
-    
+
     echo "Configuring SSH for Coolify..."
-    configure_ssh
-    
-    echo "Verifying SSH service status..."
-    systemctl status sshd    
-    
-    echo "Setup complete! Your SSH key is located at /DATA/coolify/ssh/keys/id.root@host.docker.internal"
-    
-    read -p "Would you like to display the private key now? (y/n): " show_key
-    if [[ $show_key =~ ^[Yy]$ ]]; then
-        echo "Here's your private key to copy into Coolify's Keys & Tokens menu:"
-        echo "----------------------------------------------------------------"
-        cat /DATA/coolify/ssh/keys/id.root@host.docker.internal
-        echo "----------------------------------------------------------------"
+    configure_ssh_host
+
+    echo -e "\nOptionally, you can run an SSH container as fallback..."
+    read -p "Do you want to create SSH container? (y/n): " create_container
+    if [[ $create_container =~ ^[Yy]$ ]]; then
+        create_ssh_container
     fi
+
+    echo -e "${GREEN}Setup complete!${NC}"
+    echo "Your SSH private key is at: /DATA/coolify/ssh/keys/id.root@host.docker.internal"
 }
 
+# Menu
 menu() {
     clear
-    print_header "BigBearCasaOS Coolify Setup V0.0.1"
+    print_header "BigBearCasaOS Coolify SSH Setup V1.0"
 
-    echo "Here are some links:"
-    echo "https://community.bigbeartechworld.com"
-    echo "https://github.com/BigBearTechWorld"
-    echo ""
-    echo "If you would like to support me, please consider buying me a tea:"
-    echo "https://ko-fi.com/bigbeartechworld"
-    echo ""
-    echo "===================="
-    echo "Please select an option:"
-    echo "1) Setup SSH and configurations"
-    echo "2) Clear cache"
+    echo "1) Setup SSH for Coolify"
+    echo "2) Clear Coolify cache"
     read -p "Enter choice (1-2): " menu_choice
 
     case $menu_choice in
         1) main;;
         2) clear_cache;;
-        *) echo "Invalid option selected. Exiting.";;
+        *) echo "Invalid option, exiting.";;
     esac
 }
 
-# Run the menu
+# Run
 menu
