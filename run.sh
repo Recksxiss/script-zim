@@ -13,7 +13,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # Check root
-if [ "$EUID" -ne 0 ]; then 
+if [ "$EUID" -ne 0 ]; then
     echo -e "${RED}Please run as root (use sudo)${NC}"
     exit 1
 fi
@@ -70,17 +70,14 @@ configure_ssh_host() {
     mkdir -p /DATA/coolify/ssh/keys/root
     chmod 700 /DATA/coolify/ssh/keys/root
 
-    # Generate key if not exists
     KEY_FILE="/DATA/coolify/ssh/keys/id.root@host.docker.internal"
     if [ ! -f "$KEY_FILE" ]; then
         ssh-keygen -t ed25519 -a 100 -f "$KEY_FILE" -q -N "" -C root@coolify
     fi
 
-    # Copy public key to authorized_keys
     cat "${KEY_FILE}.pub" > /DATA/coolify/ssh/keys/root/authorized_keys
     chmod 600 /DATA/coolify/ssh/keys/root/authorized_keys
 
-    # Update sshd_config
     SSHD_CONFIG="/etc/ssh/sshd_config"
     if [ -w "$SSHD_CONFIG" ]; then
         sed -i "s|^#*AuthorizedKeysFile.*|AuthorizedKeysFile /DATA/coolify/ssh/keys/%u/authorized_keys|" "$SSHD_CONFIG"
@@ -113,7 +110,7 @@ create_ssh_container() {
       -p 2222:22 \
       -v /DATA/coolify/ssh/keys:/root/.ssh \
       rastasheep/ubuntu-sshd:22.04 || echo "Container already exists"
-    
+
     echo -e "${GREEN}SSH container created on port 2222${NC}"
 }
 
