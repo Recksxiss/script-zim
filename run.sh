@@ -50,20 +50,8 @@ install_ssh() {
     esac
 }
 
-# Determine SSH service name
-ssh_service_name() {
-    if systemctl list-units --all | grep -q sshd; then
-        echo "sshd"
-    else
-        echo "ssh"
-    fi
-}
-
 # Configure SSH
 configure_ssh() {
-    local service_name
-    service_name=$(ssh_service_name)
-
     # Backup original config
     cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup
     
@@ -85,9 +73,13 @@ configure_ssh() {
     sed -i "s/^#*PermitRootLogin.*/PermitRootLogin ${root_login}/" /etc/ssh/sshd_config
     sed -i "s/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/" /etc/ssh/sshd_config
 
-    # Create required directories in /DATA
+    # Create required directories
     mkdir -p /DATA/coolify/ssh/keys
     mkdir -p ~/.ssh
+
+    # Remove old keys if exist
+    rm -f /DATA/coolify/ssh/keys/id.root@host.docker.internal
+    rm -f /DATA/coolify/ssh/keys/id.root@host.docker.internal.pub
 
     # Generate SSH key pair
     ssh-keygen -t ed25519 -a 100 -f /DATA/coolify/ssh/keys/id.root@host.docker.internal -q -N "" -C root@coolify
@@ -98,9 +90,9 @@ configure_ssh() {
     chmod 600 ~/.ssh/authorized_keys
     chmod 700 ~/.ssh
 
-    # Restart SSH service
-    systemctl restart "$service_name"
-    systemctl enable "$service_name"
+    # Restart and enable SSH service
+    systemctl restart sshd
+    systemctl enable sshd
 }
 
 clear_cache() {
@@ -111,7 +103,7 @@ clear_cache() {
 
 # Main execution
 main() {
-    # Create Docker network for Coolify if it doesn't exist
+    # Create Docker network if it doesn't exist
     if ! docker network inspect coolify >/dev/null 2>&1; then
         docker network create coolify
     fi
@@ -123,7 +115,7 @@ main() {
     configure_ssh
     
     echo "Verifying SSH service status..."
-    systemctl status "$(ssh_service_name)"    
+    systemctl status sshd    
     
     echo "Setup complete! Your SSH key is located at /DATA/coolify/ssh/keys/id.root@host.docker.internal"
     
@@ -137,7 +129,6 @@ main() {
 }
 
 menu() {
-    # Main menu
     clear
     print_header "BigBearCasaOS Coolify Setup V0.0.1"
 
