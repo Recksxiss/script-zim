@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # =================================================
-# BigBearCasaOS Coolify SSH Setup Script
+# BigBearCasaOS Coolify SSH Setup Script v2.0
 # =================================================
 
 set -euo pipefail
@@ -55,18 +55,31 @@ install_ssh() {
 
 # Determine SSH service name
 ssh_service_name() {
-    if systemctl list-units --all | grep -q sshd; then
+    if systemctl list-units --all | grep -q '^sshd\.service'; then
         echo "sshd"
-    else
+    elif systemctl list-units --all | grep -q '^ssh\.service'; then
         echo "ssh"
+    else
+        echo ""
     fi
 }
 
-# Configure SSH to use /DATA/coolify/ssh/keys
-configure_ssh_host() {
-    local service_name
-    service_name=$(ssh_service_name)
+# Restart SSH service safely
+restart_ssh_service() {
+    local service
+    service=$(ssh_service_name)
+    if [ -n "$service" ]; then
+        echo "Restarting $service..."
+        systemctl restart "$service"
+        systemctl enable "$service"
+    else
+        echo -e "${RED}No SSH service found to restart.${NC}"
+        echo "You may need to run an SSH container for Coolify instead."
+    fi
+}
 
+# Configure SSH for host
+configure_ssh_host() {
     mkdir -p /DATA/coolify/ssh/keys/root
     chmod 700 /DATA/coolify/ssh/keys/root
 
@@ -82,29 +95,15 @@ configure_ssh_host() {
     if [ -w "$SSHD_CONFIG" ]; then
         sed -i "s|^#*AuthorizedKeysFile.*|AuthorizedKeysFile /DATA/coolify/ssh/keys/%u/authorized_keys|" "$SSHD_CONFIG"
         sed -i "s/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/" "$SSHD_CONFIG"
-
-        echo -e "${GREEN}Restarting SSH service...${NC}"
-        systemctl restart "$service_name"
-        systemctl enable "$service_name"
+        restart_ssh_service
     else
-        echo -e "${YELLOW}Warning: Cannot write to $SSHD_CONFIG, host SSH will not be modified.${NC}"
-        echo -e "${YELLOW}Coolify will need to connect via SSH container.${NC}"
+        echo -e "${YELLOW}Warning: Cannot write to $SSHD_CONFIG.${NC}"
+        echo "Coolify will need to connect via SSH container instead."
     fi
 }
 
-# Create SSH container as fallback
+# Create SSH container fallback
 create_ssh_container() {
-    mkdir -p /DATA/coolify/ssh/keys/root
-    chmod 700 /DATA/coolify/ssh/keys/root
-
-    KEY_FILE="/DATA/coolify/ssh/keys/id.root@host.docker.internal"
-    if [ ! -f "$KEY_FILE" ]; then
-        ssh-keygen -t ed25519 -a 100 -f "$KEY_FILE" -q -N "" -C root@coolify
-    fi
-
-    cat "${KEY_FILE}.pub" > /DATA/coolify/ssh/keys/root/authorized_keys
-    chmod 600 /DATA/coolify/ssh/keys/root/authorized_keys
-
     docker run -d \
       --name ssh-server \
       -p 2222:22 \
@@ -121,7 +120,7 @@ clear_cache() {
     echo "Cache cleared successfully!"
 }
 
-# Main
+# Main execution
 main() {
     echo "Installing SSH server..."
     install_ssh
@@ -129,7 +128,7 @@ main() {
     echo "Configuring SSH for Coolify..."
     configure_ssh_host
 
-    echo -e "\nOptionally, you can run an SSH container as fallback..."
+    echo -e "\nOptionally, you can run an SSH container as fallback."
     read -p "Do you want to create SSH container? (y/n): " create_container
     if [[ $create_container =~ ^[Yy]$ ]]; then
         create_ssh_container
@@ -142,7 +141,7 @@ main() {
 # Menu
 menu() {
     clear
-    print_header "BigBearCasaOS Coolify SSH Setup V1.0"
+    print_header "BigBearCasaOS Coolify SSH Setup v2.0"
 
     echo "1) Setup SSH for Coolify"
     echo "2) Clear Coolify cache"
