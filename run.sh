@@ -50,8 +50,20 @@ install_ssh() {
     esac
 }
 
+# Determine SSH service name
+ssh_service_name() {
+    if systemctl list-units --all | grep -q sshd; then
+        echo "sshd"
+    else
+        echo "ssh"
+    fi
+}
+
 # Configure SSH
 configure_ssh() {
+    local service_name
+    service_name=$(ssh_service_name)
+
     # Backup original config
     cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup
     
@@ -87,8 +99,8 @@ configure_ssh() {
     chmod 700 ~/.ssh
 
     # Restart SSH service
-    systemctl restart ssh
-    systemctl enable ssh
+    systemctl restart "$service_name"
+    systemctl enable "$service_name"
 }
 
 clear_cache() {
@@ -99,8 +111,10 @@ clear_cache() {
 
 # Main execution
 main() {
-    # Create Docker network for Coolify
-    docker network create coolify || true
+    # Create Docker network for Coolify if it doesn't exist
+    if ! docker network inspect coolify >/dev/null 2>&1; then
+        docker network create coolify
+    fi
 
     echo "Installing SSH server..."
     install_ssh
@@ -109,7 +123,7 @@ main() {
     configure_ssh
     
     echo "Verifying SSH service status..."
-    systemctl status ssh    
+    systemctl status "$(ssh_service_name)"    
     
     echo "Setup complete! Your SSH key is located at /DATA/coolify/ssh/keys/id.root@host.docker.internal"
     
