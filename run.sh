@@ -33,19 +33,19 @@ fi
 install_ssh() {
     case $OS in
         ubuntu|debian)
-            sudo apt update && sudo apt install -y openssh-server
+            apt update && apt install -y openssh-server
             ;;
         centos|rhel)
-            sudo yum install -y openssh-server
+            yum install -y openssh-server
             ;;
         arch)
-            sudo pacman -S --noconfirm openssh
+            pacman -S --noconfirm openssh
             ;;
         alpine)
-            sudo apk add openssh
+            apk add openssh
             ;;
         opensuse*|sles)
-            sudo zypper install -y openssh
+            zypper install -y openssh
             ;;
     esac
 }
@@ -53,7 +53,7 @@ install_ssh() {
 # Configure SSH
 configure_ssh() {
     # Backup original config
-    sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup
+    cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup
     
     # Ask user for PermitRootLogin preference
     echo "Select PermitRootLogin setting:"
@@ -70,25 +70,25 @@ configure_ssh() {
     esac
 
     # Update SSH settings
-    sudo sed -i "s/^#*PermitRootLogin.*/PermitRootLogin ${root_login}/" /etc/ssh/sshd_config
-    sudo sed -i "s/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/" /etc/ssh/sshd_config
+    sed -i "s/^#*PermitRootLogin.*/PermitRootLogin ${root_login}/" /etc/ssh/sshd_config
+    sed -i "s/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/" /etc/ssh/sshd_config
 
     # Create required directories in /DATA
-    sudo mkdir -p /DATA/coolify/ssh/keys
+    mkdir -p /DATA/coolify/ssh/keys
     mkdir -p ~/.ssh
 
     # Generate SSH key pair
     ssh-keygen -t ed25519 -a 100 -f /DATA/coolify/ssh/keys/id.root@host.docker.internal -q -N "" -C root@coolify
 
     # Set ownership and permissions
-    sudo chown 9999 /DATA/coolify/ssh/keys/id.root@host.docker.internal
+    chown 9999 /DATA/coolify/ssh/keys/id.root@host.docker.internal
     cat /DATA/coolify/ssh/keys/id.root@host.docker.internal.pub >> ~/.ssh/authorized_keys
     chmod 600 ~/.ssh/authorized_keys
     chmod 700 ~/.ssh
 
     # Restart SSH service
-    sudo systemctl restart ssh
-    sudo systemctl enable ssh
+    systemctl restart ssh
+    systemctl enable ssh
 }
 
 clear_cache() {
@@ -100,7 +100,7 @@ clear_cache() {
 # Main execution
 main() {
     # Create Docker network for Coolify
-    docker network create coolify
+    docker network create coolify || true
 
     echo "Installing SSH server..."
     install_ssh
@@ -109,7 +109,7 @@ main() {
     configure_ssh
     
     echo "Verifying SSH service status..."
-    sudo systemctl status ssh    
+    systemctl status ssh    
     
     echo "Setup complete! Your SSH key is located at /DATA/coolify/ssh/keys/id.root@host.docker.internal"
     
